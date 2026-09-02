@@ -60,10 +60,7 @@ public class DatabaseService
 
     private void SetDefaultSettingIfNotExists(string key, string defaultValue)
     {
-        if (GetSetting(key) == null)
-        {
-            SetSetting(key, defaultValue);
-        }
+        if (GetSetting(key) == null) SetSetting(key, defaultValue);
     }
 
     public string? GetSetting(string key)
@@ -160,6 +157,21 @@ public class DatabaseService
         cmd.ExecuteNonQuery();
     }
 
+    public List<string> GetAllPhotoIds()
+    {
+        var ids = new List<string>();
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id FROM Local_Photos;";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            ids.Add(reader.GetString(0));
+        }
+        return ids;
+    }
+
     public LocalPhoto? GetPhotoById(string id)
     {
         using var connection = new SqliteConnection(_connectionString);
@@ -169,74 +181,56 @@ public class DatabaseService
         cmd.Parameters.AddWithValue("$id", id);
 
         using var reader = cmd.ExecuteReader();
-        if (reader.Read())
-        {
-            return MapReaderToPhoto(reader);
-        }
+        if (reader.Read()) return MapReaderToPhoto(reader);
         return null;
     }
 
-    public LocalPhoto? GetNextUnshownNormalPhoto()
+    public LocalPhoto? GetNextUnshownNormalPhoto(string? excludeId = null)
     {
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
         var cmd = connection.CreateCommand();
-        // L'UUID v7 permet un tri naturel chronologique descendant
-        cmd.CommandText = @"
-            SELECT id, filepath, is_favorite, has_been_shown, capture_date, location 
-            FROM Local_Photos 
-            WHERE is_favorite = 0 AND has_been_shown = 0 
-            ORDER BY id DESC 
-            LIMIT 1;
-        ";
+        cmd.CommandText = "SELECT id, filepath, is_favorite, has_been_shown, capture_date, location FROM Local_Photos WHERE is_favorite = 0 AND has_been_shown = 0 " +
+                          (excludeId != null ? "AND id != $exclude " : "") + "ORDER BY id DESC LIMIT 1;";
+        if (excludeId != null) cmd.Parameters.AddWithValue("$exclude", excludeId);
 
         using var reader = cmd.ExecuteReader();
-        if (reader.Read())
-        {
-            return MapReaderToPhoto(reader);
-        }
+        if (reader.Read()) return MapReaderToPhoto(reader);
+        
+        // Si aucune autre non vue n'est trouvée (sauf la courante), on réessaie sans l'exclusion
+        if (excludeId != null) return GetNextUnshownNormalPhoto(null);
         return null;
     }
 
-    public LocalPhoto? GetRandomShownNormalPhoto()
+    public LocalPhoto? GetRandomShownNormalPhoto(string? excludeId = null)
     {
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
         var cmd = connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT id, filepath, is_favorite, has_been_shown, capture_date, location 
-            FROM Local_Photos 
-            WHERE is_favorite = 0 
-            ORDER BY RANDOM() 
-            LIMIT 1;
-        ";
+        cmd.CommandText = "SELECT id, filepath, is_favorite, has_been_shown, capture_date, location FROM Local_Photos WHERE is_favorite = 0 " +
+                          (excludeId != null ? "AND id != $exclude " : "") + "ORDER BY RANDOM() LIMIT 1;";
+        if (excludeId != null) cmd.Parameters.AddWithValue("$exclude", excludeId);
 
         using var reader = cmd.ExecuteReader();
-        if (reader.Read())
-        {
-            return MapReaderToPhoto(reader);
-        }
+        if (reader.Read()) return MapReaderToPhoto(reader);
+        
+        if (excludeId != null) return GetRandomShownNormalPhoto(null);
         return null;
     }
 
-    public LocalPhoto? GetRandomFavoritePhoto()
+    public LocalPhoto? GetRandomFavoritePhoto(string? excludeId = null)
     {
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
         var cmd = connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT id, filepath, is_favorite, has_been_shown, capture_date, location 
-            FROM Local_Photos 
-            WHERE is_favorite = 1 
-            ORDER BY RANDOM() 
-            LIMIT 1;
-        ";
+        cmd.CommandText = "SELECT id, filepath, is_favorite, has_been_shown, capture_date, location FROM Local_Photos WHERE is_favorite = 1 " +
+                          (excludeId != null ? "AND id != $exclude " : "") + "ORDER BY RANDOM() LIMIT 1;";
+        if (excludeId != null) cmd.Parameters.AddWithValue("$exclude", excludeId);
 
         using var reader = cmd.ExecuteReader();
-        if (reader.Read())
-        {
-            return MapReaderToPhoto(reader);
-        }
+        if (reader.Read()) return MapReaderToPhoto(reader);
+        
+        if (excludeId != null) return GetRandomFavoritePhoto(null);
         return null;
     }
 
@@ -247,8 +241,7 @@ public class DatabaseService
         var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT COUNT(1) FROM Local_Photos WHERE id = $id;";
         cmd.Parameters.AddWithValue("$id", id);
-        var count = Convert.ToInt32(cmd.ExecuteScalar());
-        return count > 0;
+        return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
     }
 
     private static LocalPhoto MapReaderToPhoto(SqliteDataReader reader)

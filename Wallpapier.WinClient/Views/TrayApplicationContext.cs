@@ -29,9 +29,17 @@ public partial class TrayApplicationContext : ApplicationContext
         _syncManager = syncManager;
 
         var contextMenu = new ContextMenuStrip();
-        _menuNext = new ToolStripMenuItem("Passer à la suivante", null, (s, e) => _wallpaperManager.ApplyNextWallpaper());
+        
+        _menuNext = new ToolStripMenuItem("Passer à la suivante", null, (s, e) => {
+            // Force le changement puis relance le chronomètre de zéro
+            _wallpaperManager.ApplyNextWallpaper();
+            _syncManager.PlanNextCycle(); 
+        });
+        
         _menuFavorite = new ToolStripMenuItem("Ajouter aux favoris", null, async (s, e) => await ToggleFavoriteAsync());
+        
         _menuSettings = new ToolStripMenuItem("Paramètres...", null, (s, e) => OpenSettings());
+        
         _menuExit = new ToolStripMenuItem("Quitter", null, (s, e) => Exit());
 
         contextMenu.Items.AddRange([_menuNext, _menuFavorite, new ToolStripSeparator(), _menuSettings, _menuExit]);
@@ -43,9 +51,13 @@ public partial class TrayApplicationContext : ApplicationContext
             Text = "Wallpapier"
         };
 
-        _wallpaperManager.OnWallpaperChanged += UpdateTooltip;
+        _wallpaperManager.OnWallpaperChanged += (photo) => {
+            UpdateTooltip(photo);
+            // Refait un manifest (silencieux) dès que la photo change
+            _ = _syncManager.ExecuteSyncProcessAsync(forceFull: false);
+        };
+        
         _syncManager.OnStatusChanged += UpdateStatusIcon;
-
         UpdateStatusIcon(_syncManager.CurrentStatus);
     }
 
@@ -59,7 +71,6 @@ public partial class TrayApplicationContext : ApplicationContext
             _ => Color.Gray
         };
 
-        // Génère un Bitmap 16x16 vectoriel pour le voyant de statut
         using var bitmap = new Bitmap(16, 16);
         using (var g = Graphics.FromImage(bitmap))
         {
@@ -92,13 +103,9 @@ public partial class TrayApplicationContext : ApplicationContext
             : "Non renseigné";
 
         var tooltip = $"Wallpapier\nDate : {dateStr}\nLieu : {locStr}";
-        // Limite native Windows de 63 caractères sur l'infobulle NotifyIcon
-        if (tooltip.Length > 63)
-        {
-            tooltip = tooltip[..60] + "...";
-        }
+        if (tooltip.Length > 63) tooltip = tooltip[..60] + "...";
+        
         _notifyIcon.Text = tooltip;
-
         _menuFavorite.Text = photo.IsFavorite ? "★ Retirer des favoris" : "☆ Ajouter aux favoris";
     }
 
@@ -117,16 +124,16 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             await _api.UpdatePhotoFavoriteAsync(photo.Id, newStatus);
         }
-        catch
-        {
-            // La base locale conserve la préférence si le serveur est inaccessible
-        }
+        catch { }
     }
 
     private void OpenSettings()
     {
         using var settingsForm = new SettingsForm(_db, _api);
         settingsForm.ShowDialog();
+        
+        // Force un manifest complet et relance le cycle à la fermeture des paramètres
+        _ = _syncManager.ExecuteSyncProcessAsync(forceFull: true);
         _syncManager.PlanNextCycle();
     }
 

@@ -18,11 +18,8 @@ public class WallpaperManager
 
     public bool ApplyNextWallpaper()
     {
-        var candidate = SelectNextPhoto();
-        if (candidate == null)
-        {
-            return false;
-        }
+        var candidate = SelectNextPhoto(CurrentPhoto?.Id);
+        if (candidate == null) return false;
 
         if (!File.Exists(candidate.Filepath))
         {
@@ -43,28 +40,22 @@ public class WallpaperManager
         return false;
     }
 
-    private LocalPhoto? SelectNextPhoto()
+    private LocalPhoto? SelectNextPhoto(string? currentIdToExclude)
     {
-        // Règle 1 : Photo normale la plus récente non encore affichée
-        var unshownNormal = _db.GetNextUnshownNormalPhoto();
-        if (unshownNormal != null)
-        {
-            return unshownNormal;
-        }
+        // Règle 1 : Photo normale la plus récente non encore affichée (on exclut l'actuelle)
+        var unshownNormal = _db.GetNextUnshownNormalPhoto(currentIdToExclude);
+        if (unshownNormal != null) return unshownNormal;
 
         // Règle 2 : Tirage pondéré aléatoire basé sur le ratio
         var ratioStr = _db.GetSetting("FavRatio") ?? "20";
-        if (!int.TryParse(ratioStr, out var favRatioPercent))
-        {
-            favRatioPercent = 20;
-        }
+        if (!int.TryParse(ratioStr, out var favRatioPercent)) favRatioPercent = 20;
 
         var roll = _random.Next(0, 100);
         if (roll < favRatioPercent)
         {
-            return _db.GetRandomFavoritePhoto() ?? _db.GetRandomShownNormalPhoto();
+            return _db.GetRandomFavoritePhoto(currentIdToExclude) ?? _db.GetRandomShownNormalPhoto(currentIdToExclude);
         }
 
-        return _db.GetRandomShownNormalPhoto() ?? _db.GetRandomFavoritePhoto();
+        return _db.GetRandomShownNormalPhoto(currentIdToExclude) ?? _db.GetRandomFavoritePhoto(currentIdToExclude);
     }
 }

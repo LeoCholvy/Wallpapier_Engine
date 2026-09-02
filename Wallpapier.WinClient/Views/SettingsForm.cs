@@ -92,7 +92,16 @@ public class SettingsForm : Form
 
     private async Task SaveSettingsAsync()
     {
-        _db.SetSetting("ServerIP", _txtServerIp.Text.Trim());
+        var currentIp = _db.GetSetting("ServerIP") ?? "";
+        var newIp = _txtServerIp.Text.Trim();
+
+        if (currentIp != newIp)
+        {
+            // Réinitialisation forcée si l'IP change
+            _db.SetSetting("LastSyncDate", "");
+        }
+
+        _db.SetSetting("ServerIP", newIp);
         _db.SetSetting("Pin", _txtPin.Text.Trim());
         _db.SetSetting("FavRatio", _numRatio.Value.ToString());
         _db.SetSetting("TimePerPhoto", _numTimePerPhoto.Value.ToString());
@@ -110,13 +119,13 @@ public class SettingsForm : Form
             }
             catch
             {
-                MessageBox.Show("Configuration locale enregistrée, mais impossible de joindre le serveur pour mettre à jour l'heure de reset.", "Avertissement", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Configuration enregistrée, mais impossible de joindre le serveur pour mettre à jour l'heure de reset.", "Avertissement", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Close();
                 return;
             }
         }
 
-        MessageBox.Show("Paramètres sauvegardés avec succès.", "Wallpapier", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show("Paramètres sauvegardés.", "Wallpapier", MessageBoxButtons.OK, MessageBoxIcon.Information);
         Close();
     }
 }

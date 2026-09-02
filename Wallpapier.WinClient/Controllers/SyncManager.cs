@@ -17,6 +17,9 @@ public class SyncManager
     private readonly WallpaperManager _wallpaperManager;
     private System.Threading.Timer? _scheduleTimer;
     private readonly object _syncLock = new();
+    
+    // Garde en mémoire la date de la dernière synchronisation TOTALE (sans le paramètre "since")
+    private DateTime _lastFullSyncDate = DateTime.MinValue;
 
     public ConnectionStatus CurrentStatus { get; private set; } = ConnectionStatus.Disconnected;
     public event Action<ConnectionStatus>? OnStatusChanged;
@@ -38,7 +41,6 @@ public class SyncManager
         var timePerPhotoMin = int.TryParse(_db.GetSetting("TimePerPhoto"), out var t) ? t : 60;
         var syncAnticipationMin = int.TryParse(_db.GetSetting("SyncAnticipationTime"), out var s) ? s : 5;
 
-        // Le check de synchro a lieu X minutes avant le changement prévu
         var delayBeforeSyncMinutes = Math.Max(1, timePerPhotoMin - syncAnticipationMin);
         var syncDelay = TimeSpan.FromMinutes(delayBeforeSyncMinutes);
         var changeDelay = TimeSpan.FromMinutes(timePerPhotoMin);
@@ -48,7 +50,6 @@ public class SyncManager
         {
             await ExecuteSyncProcessAsync();
 
-            // Programmer le changement d'écran à l'échéance exacte
             var remainingTime = changeDelay - syncDelay;
             if (remainingTime <= TimeSpan.Zero) remainingTime = TimeSpan.FromSeconds(5);
 
@@ -61,7 +62,7 @@ public class SyncManager
         }, null, syncDelay, Timeout.InfiniteTimeSpan);
     }
 
-    public async Task ExecuteSyncProcessAsync()
+    public async Task ExecuteSyncProcessAsync(bool forceFull = false)
     {
         lock (_syncLock)
         {
@@ -72,7 +73,13 @@ public class SyncManager
         try
         {
             var lastSync = _db.GetSetting("LastSyncDate");
-            var manifest = await _api.GetManifestAsync(string.IsNullOrWhiteSpace(lastSync) ? null : lastSync);
+            
+            // Si on force, si c'est le 1er lancement, ou si la dernière synchro totale date de plus de 1h
+            bool isFullSync = forceFull || 
+                              string.IsNullOrWhiteSpace(lastSync) || 
+                              (DateTime.Now - _lastFullSyncDate).TotalHours >= 1;
+
+            var manifest = await _api.GetManifestAsync(isFullSync ? null : lastSync);
 
             if (manifest == null)
             {
@@ -80,10 +87,25 @@ public class SyncManager
                 return;
             }
 
-            // 1. Suppressions locales
+            // 1. Suppressions locales (via list des supprimés)
             foreach (var deletedId in manifest.Deleted)
             {
                 _db.DeletePhoto(deletedId);
+            }
+
+            // 1.bis Si full sync : on nettoie les photos locales qui n'existent plus du tout sur le serveur
+            if (isFullSync)
+            {
+                var serverIds = manifest.Created.Select(p => p.Id).ToHashSet();
+                var localIds = _db.GetAllPhotoIds();
+                foreach (var localId in localIds)
+                {
+                    if (!serverIds.Contains(localId))
+                    {
+                        _db.DeletePhoto(localId);
+                    }
+                }
+                _lastFullSyncDate = DateTime.Now;
             }
 
             // 2. Mises à jour des statuts favoris
@@ -125,7 +147,6 @@ public class SyncManager
             {
                 await _api.SendManifestAckAsync();
                 
-                // Enregistrement du timestamp selon le fuseau horaire français
                 var parisZone = TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time");
                 var parisTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, parisZone);
                 _db.SetSetting("LastSyncDate", parisTime.ToString("o"));
