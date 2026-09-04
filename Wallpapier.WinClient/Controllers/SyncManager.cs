@@ -18,7 +18,6 @@ public class SyncManager
     private System.Threading.Timer? _scheduleTimer;
     private readonly object _syncLock = new();
     
-    // Garde en mémoire la date de la dernière synchronisation TOTALE (sans le paramètre "since")
     private DateTime _lastFullSyncDate = DateTime.MinValue;
 
     public ConnectionStatus CurrentStatus { get; private set; } = ConnectionStatus.Disconnected;
@@ -74,7 +73,6 @@ public class SyncManager
         {
             var lastSync = _db.GetSetting("LastSyncDate");
             
-            // Si on force, si c'est le 1er lancement, ou si la dernière synchro totale date de plus de 1h
             bool isFullSync = forceFull || 
                               string.IsNullOrWhiteSpace(lastSync) || 
                               (DateTime.Now - _lastFullSyncDate).TotalHours >= 1;
@@ -87,13 +85,12 @@ public class SyncManager
                 return;
             }
 
-            // 1. Suppressions locales (via list des supprimés)
+            // 1. Suppressions locales
             foreach (var deletedId in manifest.Deleted)
             {
                 _db.DeletePhoto(deletedId);
             }
 
-            // 1.bis Si full sync : on nettoie les photos locales qui n'existent plus du tout sur le serveur
             if (isFullSync)
             {
                 var serverIds = manifest.Created.Select(p => p.Id).ToHashSet();
@@ -106,6 +103,12 @@ public class SyncManager
                     }
                 }
                 _lastFullSyncDate = DateTime.Now;
+                
+                // Si la photo actuelle vient d'être supprimée (ex: par le nettoyage d'une autre app)
+                if (_wallpaperManager.CurrentPhoto != null && !serverIds.Contains(_wallpaperManager.CurrentPhoto.Id))
+                {
+                    _wallpaperManager.ApplyNextWallpaper();
+                }
             }
 
             // 2. Mises à jour des statuts favoris
@@ -139,6 +142,12 @@ public class SyncManager
                         CaptureDate = candidateToDownload.CaptureDate,
                         Location = candidateToDownload.Location
                     });
+
+                    // NOUVEAU COMPORTEMENT : Si l'app était à vide, on applique l'image tout de suite
+                    if (_wallpaperManager.CurrentPhoto == null)
+                    {
+                        _wallpaperManager.ApplyNextWallpaper();
+                    }
                 }
             }
 

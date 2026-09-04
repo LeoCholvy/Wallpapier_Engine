@@ -14,6 +14,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
     private readonly ToolStripMenuItem _menuNext;
     private readonly ToolStripMenuItem _menuFavorite;
+    private readonly ToolStripMenuItem _menuReconnect;
     private readonly ToolStripMenuItem _menuSettings;
     private readonly ToolStripMenuItem _menuExit;
 
@@ -31,33 +32,46 @@ public partial class TrayApplicationContext : ApplicationContext
         var contextMenu = new ContextMenuStrip();
         
         _menuNext = new ToolStripMenuItem("Passer à la suivante", null, (s, e) => {
-            // Force le changement puis relance le chronomètre de zéro
             _wallpaperManager.ApplyNextWallpaper();
             _syncManager.PlanNextCycle(); 
         });
         
         _menuFavorite = new ToolStripMenuItem("Ajouter aux favoris", null, async (s, e) => await ToggleFavoriteAsync());
         
-        _menuSettings = new ToolStripMenuItem("Paramètres...", null, (s, e) => OpenSettings());
+        // NOUVEAU BOUTON : Reconnexion manuelle complète
+        _menuReconnect = new ToolStripMenuItem("Reconnexion / Synchro", null, (s, e) => {
+            _ = _syncManager.ExecuteSyncProcessAsync(forceFull: true);
+            _syncManager.PlanNextCycle();
+        });
         
+        _menuSettings = new ToolStripMenuItem("Paramètres...", null, (s, e) => OpenSettings());
         _menuExit = new ToolStripMenuItem("Quitter", null, (s, e) => Exit());
 
-        contextMenu.Items.AddRange([_menuNext, _menuFavorite, new ToolStripSeparator(), _menuSettings, _menuExit]);
+        contextMenu.Items.AddRange([
+            _menuNext, 
+            _menuFavorite, 
+            new ToolStripSeparator(), 
+            _menuReconnect, 
+            _menuSettings, 
+            _menuExit
+        ]);
 
         _notifyIcon = new NotifyIcon
         {
             ContextMenuStrip = contextMenu,
             Visible = true,
-            Text = "Wallpapier"
+            Text = "Wallpapier - En attente de photos"
         };
 
         _wallpaperManager.OnWallpaperChanged += (photo) => {
             UpdateTooltip(photo);
-            // Refait un manifest (silencieux) dès que la photo change
             _ = _syncManager.ExecuteSyncProcessAsync(forceFull: false);
         };
         
         _syncManager.OnStatusChanged += UpdateStatusIcon;
+        
+        // Initialisation de l'état des menus
+        RefreshMenuState();
         UpdateStatusIcon(_syncManager.CurrentStatus);
     }
 
@@ -92,8 +106,25 @@ public partial class TrayApplicationContext : ApplicationContext
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static partial bool DestroyIcon(IntPtr hIcon);
 
+    private void RefreshMenuState()
+    {
+        var hasPhoto = _wallpaperManager.CurrentPhoto != null;
+        _menuNext.Enabled = hasPhoto;
+        _menuFavorite.Enabled = hasPhoto;
+
+        if (!hasPhoto)
+        {
+            _notifyIcon.Text = "Wallpapier - Aucune photo disponible";
+            _menuFavorite.Text = "☆ Ajouter aux favoris";
+        }
+    }
+
     private void UpdateTooltip(LocalPhoto photo)
     {
+        RefreshMenuState();
+
+        if (photo == null) return;
+
         var dateStr = photo.CaptureDate.HasValue
             ? photo.CaptureDate.Value.ToString("dd/MM/yyyy HH:mm")
             : "Inconnue";
@@ -132,7 +163,6 @@ public partial class TrayApplicationContext : ApplicationContext
         using var settingsForm = new SettingsForm(_db, _api);
         settingsForm.ShowDialog();
         
-        // Force un manifest complet et relance le cycle à la fermeture des paramètres
         _ = _syncManager.ExecuteSyncProcessAsync(forceFull: true);
         _syncManager.PlanNextCycle();
     }
