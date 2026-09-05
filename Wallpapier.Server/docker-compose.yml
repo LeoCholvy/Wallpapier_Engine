@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  wallpapier-server:
+    build: .
+    network_mode: "host" # Indispensable pour écouter sur l'IP Tailscale du Raspberry
+    volumes:
+      # /mnt/usb doit être le vrai chemin de votre clé USB sur le Raspberry Pi
+      - /mnt/usb/WallpapierData:/app/usb_mount
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped

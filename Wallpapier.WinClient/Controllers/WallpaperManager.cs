@@ -9,6 +9,8 @@ public class WallpaperManager
     private readonly Random _random = new();
 
     public LocalPhoto? CurrentPhoto { get; private set; }
+    public bool IsCurrentPhotoFresh { get; private set; }
+    
     public event Action<LocalPhoto>? OnWallpaperChanged;
 
     public WallpaperManager(DatabaseService db)
@@ -21,6 +23,7 @@ public class WallpaperManager
         var candidate = SelectNextPhoto(CurrentPhoto?.Id);
         if (candidate == null) return false;
 
+        // Si l'image n'existe plus sur le disque
         if (!File.Exists(candidate.Filepath))
         {
             _db.DeletePhoto(candidate.Id);
@@ -42,20 +45,35 @@ public class WallpaperManager
 
     private LocalPhoto? SelectNextPhoto(string? currentIdToExclude)
     {
-        // Règle 1 : Photo normale la plus récente non encore affichée (on exclut l'actuelle)
         var unshownNormal = _db.GetNextUnshownNormalPhoto(currentIdToExclude);
-        if (unshownNormal != null) return unshownNormal;
+        if (unshownNormal != null)
+        {
+            IsCurrentPhotoFresh = true;
+            return unshownNormal;
+        }
 
-        // Règle 2 : Tirage pondéré aléatoire basé sur le ratio
+        IsCurrentPhotoFresh = false;
+
         var ratioStr = _db.GetSetting("FavRatio") ?? "20";
         if (!int.TryParse(ratioStr, out var favRatioPercent)) favRatioPercent = 20;
 
         var roll = _random.Next(0, 100);
+        LocalPhoto? candidate = null;
+
+        // Tentative selon les probabilités
         if (roll < favRatioPercent)
         {
-            return _db.GetRandomFavoritePhoto(currentIdToExclude) ?? _db.GetRandomShownNormalPhoto(currentIdToExclude);
+            candidate = _db.GetRandomFavoritePhoto(currentIdToExclude) ?? _db.GetRandomShownNormalPhoto(currentIdToExclude);
+        }
+        else
+        {
+            candidate = _db.GetRandomShownNormalPhoto(currentIdToExclude) ?? _db.GetRandomFavoritePhoto(currentIdToExclude);
         }
 
-        return _db.GetRandomShownNormalPhoto(currentIdToExclude) ?? _db.GetRandomFavoritePhoto(currentIdToExclude);
+        // Ultime secours : s'il n'y a VRAIMENT aucune autre photo, on lève l'exclusion pour au moins afficher quelque chose
+        return candidate 
+            ?? _db.GetRandomShownNormalPhoto(null) 
+            ?? _db.GetRandomFavoritePhoto(null) 
+            ?? _db.GetNextUnshownNormalPhoto(null);
     }
 }

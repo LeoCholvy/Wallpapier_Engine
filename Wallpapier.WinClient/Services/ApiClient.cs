@@ -15,7 +15,8 @@ public class ApiClient
         _db = db;
         _httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(30)
+            // Augmentation du Timeout à 5 minutes pour éviter l'échec sur les réseaux lents
+            Timeout = TimeSpan.FromMinutes(5)
         };
     }
 
@@ -62,6 +63,7 @@ public class ApiClient
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         ApplyHeaders(request);
 
+        // HttpCompletionOption.ResponseHeadersRead permet de ne pas charger tout le fichier en RAM
         var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode)
         {
@@ -75,10 +77,7 @@ public class ApiClient
             await stream.CopyToAsync(fileStream);
         }
 
-        if (File.Exists(destinationPath))
-        {
-            File.Delete(destinationPath);
-        }
+        if (File.Exists(destinationPath)) File.Delete(destinationPath);
         File.Move(tempPath, destinationPath);
 
         return true;

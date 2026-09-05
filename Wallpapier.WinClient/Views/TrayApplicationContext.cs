@@ -18,6 +18,9 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _menuSettings;
     private readonly ToolStripMenuItem _menuExit;
 
+    // Contexte UI pour mettre à jour le Tooltip proprement depuis le thread d'arrière-plan
+    private readonly SynchronizationContext? _uiContext;
+
     public TrayApplicationContext(
         DatabaseService db,
         ApiClient api,
@@ -28,20 +31,19 @@ public partial class TrayApplicationContext : ApplicationContext
         _api = api;
         _wallpaperManager = wallpaperManager;
         _syncManager = syncManager;
+        _uiContext = SynchronizationContext.Current;
 
         var contextMenu = new ContextMenuStrip();
         
         _menuNext = new ToolStripMenuItem("Passer à la suivante", null, (s, e) => {
             _wallpaperManager.ApplyNextWallpaper();
-            _syncManager.PlanNextCycle(); 
+            _syncManager.ResetCycle(); 
         });
         
         _menuFavorite = new ToolStripMenuItem("Ajouter aux favoris", null, async (s, e) => await ToggleFavoriteAsync());
         
-        // NOUVEAU BOUTON : Reconnexion manuelle complète
         _menuReconnect = new ToolStripMenuItem("Reconnexion / Synchro", null, (s, e) => {
-            _ = _syncManager.ExecuteSyncProcessAsync(forceFull: true);
-            _syncManager.PlanNextCycle();
+            _ = _syncManager.ExecuteSyncProcessAsync(forceFull: true, applyNewPhoto: true);
         });
         
         _menuSettings = new ToolStripMenuItem("Paramètres...", null, (s, e) => OpenSettings());
@@ -60,17 +62,16 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             ContextMenuStrip = contextMenu,
             Visible = true,
-            Text = "Wallpapier - En attente de photos"
+            Text = "Wallpapier - Démarrage..."
         };
 
-        _wallpaperManager.OnWallpaperChanged += (photo) => {
-            UpdateTooltip(photo);
-            _ = _syncManager.ExecuteSyncProcessAsync(forceFull: false);
+        // Abonnements
+        _syncManager.OnStatusChanged += UpdateStatusIcon;
+        _syncManager.OnTickUpdate += () => {
+            if (_uiContext != null) _uiContext.Post(_ => RefreshTooltip(), null);
+            else RefreshTooltip();
         };
         
-        _syncManager.OnStatusChanged += UpdateStatusIcon;
-        
-        // Initialisation de l'état des menus
         RefreshMenuState();
         UpdateStatusIcon(_syncManager.CurrentStatus);
     }
@@ -111,33 +112,58 @@ public partial class TrayApplicationContext : ApplicationContext
         var hasPhoto = _wallpaperManager.CurrentPhoto != null;
         _menuNext.Enabled = hasPhoto;
         _menuFavorite.Enabled = hasPhoto;
-
-        if (!hasPhoto)
-        {
-            _notifyIcon.Text = "Wallpapier - Aucune photo disponible";
-            _menuFavorite.Text = "☆ Ajouter aux favoris";
-        }
     }
 
-    private void UpdateTooltip(LocalPhoto photo)
+    private void RefreshTooltip()
     {
         RefreshMenuState();
+        var photo = _wallpaperManager.CurrentPhoto;
 
-        if (photo == null) return;
+        // 1. Ligne 1 : Statut et Temps
+        string connStatus = _syncManager.CurrentStatus switch
+        {
+            ConnectionStatus.Connected => "OK",
+            ConnectionStatus.Disconnected => "Hors ligne",
+            ConnectionStatus.Syncing => "Synchro...",
+            _ => "?"
+        };
 
-        var dateStr = photo.CaptureDate.HasValue
-            ? photo.CaptureDate.Value.ToString("dd/MM/yyyy HH:mm")
-            : "Inconnue";
-
-        var locStr = !string.IsNullOrWhiteSpace(photo.Location)
-            ? photo.Location
-            : "Non renseigné";
-
-        var tooltip = $"Wallpapier\nDate : {dateStr}\nLieu : {locStr}";
-        if (tooltip.Length > 63) tooltip = tooltip[..60] + "...";
+        string pauseState = _syncManager.IsPaused ? " [En pause]" : "";
         
-        _notifyIcon.Text = tooltip;
-        _menuFavorite.Text = photo.IsFavorite ? "★ Retirer des favoris" : "☆ Ajouter aux favoris";
+        TimeSpan t = TimeSpan.FromSeconds(_syncManager.RemainingSeconds);
+        string timeStr = t.TotalHours >= 1 
+            ? $"{(int)t.TotalHours:D2}h{t.Minutes:D2}m" 
+            : $"{t.Minutes:D2}m{t.Seconds:D2}s";
+
+        string tooltip = $"{connStatus}{pauseState} | -{timeStr}";
+
+        // 2. Lignes 2 & 3 : Photo infos
+        if (photo != null)
+        {
+            var dateStr = photo.CaptureDate.HasValue ? photo.CaptureDate.Value.ToString("dd/MM/yy HH:mm") : "Date Inconnue";
+            var locStr = !string.IsNullOrWhiteSpace(photo.Location) ? photo.Location : "Lieu inconnu";
+            var favStr = photo.IsFavorite ? "★" : "☆";
+
+            tooltip += $"\n{locStr}\n{dateStr} {favStr}";
+            _menuFavorite.Text = photo.IsFavorite ? "★ Retirer des favoris" : "☆ Ajouter aux favoris";
+        }
+        else
+        {
+            tooltip += "\n\nAucune photo disponible.";
+            _menuFavorite.Text = "☆ Ajouter aux favoris";
+        }
+
+        // Sécurité système : limite stricte Win32 NotifyIcon (127 caractères)
+        if (tooltip.Length > 127) 
+        {
+            tooltip = tooltip[..124] + "...";
+        }
+
+        // Assigne uniquement si le texte a changé (réduit les scintillements UI)
+        if (_notifyIcon.Text != tooltip)
+        {
+            _notifyIcon.Text = tooltip;
+        }
     }
 
     private async Task ToggleFavoriteAsync()
@@ -149,7 +175,9 @@ public partial class TrayApplicationContext : ApplicationContext
 
         photo.IsFavorite = newStatus;
         _db.UpdateFavorite(photo.Id, newStatus);
-        UpdateTooltip(photo);
+        
+        // Rafraîchit l'UI immédiatement après le clic
+        RefreshTooltip();
 
         try
         {
@@ -164,7 +192,7 @@ public partial class TrayApplicationContext : ApplicationContext
         settingsForm.ShowDialog();
         
         _ = _syncManager.ExecuteSyncProcessAsync(forceFull: true);
-        _syncManager.PlanNextCycle();
+        _syncManager.ResetCycle();
     }
 
     private void Exit()

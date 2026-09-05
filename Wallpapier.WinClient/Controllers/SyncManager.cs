@@ -15,13 +15,21 @@ public class SyncManager
     private readonly DatabaseService _db;
     private readonly ApiClient _api;
     private readonly WallpaperManager _wallpaperManager;
-    private System.Threading.Timer? _scheduleTimer;
+    private System.Threading.Timer? _tickTimer;
     private readonly object _syncLock = new();
     
     private DateTime _lastFullSyncDate = DateTime.MinValue;
+    
+    private int _visibleSecondsElapsed = 0;
+    private bool _syncDoneForThisCycle = false;
 
     public ConnectionStatus CurrentStatus { get; private set; } = ConnectionStatus.Disconnected;
+    
+    public bool IsPaused { get; private set; } = false;
+    public int RemainingSeconds { get; private set; } = 0;
+    
     public event Action<ConnectionStatus>? OnStatusChanged;
+    public event Action? OnTickUpdate;
 
     public SyncManager(DatabaseService db, ApiClient api, WallpaperManager wallpaperManager)
     {
@@ -32,36 +40,49 @@ public class SyncManager
 
     public void Start()
     {
-        PlanNextCycle();
+        _tickTimer = new System.Threading.Timer(OnTick, null, 0, 1000);
     }
 
-    public void PlanNextCycle()
+    public void ResetCycle()
     {
+        _visibleSecondsElapsed = 0;
+        _syncDoneForThisCycle = false;
+    }
+
+    private void OnTick(object? state)
+    {
+        IsPaused = SystemIntegration.IsDesktopObscured();
+
         var timePerPhotoMin = int.TryParse(_db.GetSetting("TimePerPhoto"), out var t) ? t : 60;
         var syncAnticipationMin = int.TryParse(_db.GetSetting("SyncAnticipationTime"), out var s) ? s : 5;
+        
+        var totalCycleSec = timePerPhotoMin * 60;
+        var anticipationSec = syncAnticipationMin * 60;
+        var syncThresholdSec = Math.Max(1, totalCycleSec - anticipationSec);
 
-        var delayBeforeSyncMinutes = Math.Max(1, timePerPhotoMin - syncAnticipationMin);
-        var syncDelay = TimeSpan.FromMinutes(delayBeforeSyncMinutes);
-        var changeDelay = TimeSpan.FromMinutes(timePerPhotoMin);
-
-        _scheduleTimer?.Dispose();
-        _scheduleTimer = new System.Threading.Timer(async _ =>
+        if (!IsPaused)
         {
-            await ExecuteSyncProcessAsync();
+            _visibleSecondsElapsed++;
+        }
 
-            var remainingTime = changeDelay - syncDelay;
-            if (remainingTime <= TimeSpan.Zero) remainingTime = TimeSpan.FromSeconds(5);
+        RemainingSeconds = Math.Max(0, totalCycleSec - _visibleSecondsElapsed);
 
-            _ = Task.Delay(remainingTime).ContinueWith(_ =>
-            {
-                _wallpaperManager.ApplyNextWallpaper();
-                PlanNextCycle();
-            });
+        if (_visibleSecondsElapsed >= syncThresholdSec && !_syncDoneForThisCycle)
+        {
+            _syncDoneForThisCycle = true;
+            _ = ExecuteSyncProcessAsync(forceFull: false);
+        }
 
-        }, null, syncDelay, Timeout.InfiniteTimeSpan);
+        if (_visibleSecondsElapsed >= totalCycleSec)
+        {
+            _wallpaperManager.ApplyNextWallpaper();
+            ResetCycle();
+        }
+        
+        OnTickUpdate?.Invoke();
     }
 
-    public async Task ExecuteSyncProcessAsync(bool forceFull = false)
+    public async Task ExecuteSyncProcessAsync(bool forceFull = false, bool applyNewPhoto = false)
     {
         lock (_syncLock)
         {
@@ -72,7 +93,6 @@ public class SyncManager
         try
         {
             var lastSync = _db.GetSetting("LastSyncDate");
-            
             bool isFullSync = forceFull || 
                               string.IsNullOrWhiteSpace(lastSync) || 
                               (DateTime.Now - _lastFullSyncDate).TotalHours >= 1;
@@ -85,7 +105,6 @@ public class SyncManager
                 return;
             }
 
-            // 1. Suppressions locales
             foreach (var deletedId in manifest.Deleted)
             {
                 _db.DeletePhoto(deletedId);
@@ -97,27 +116,22 @@ public class SyncManager
                 var localIds = _db.GetAllPhotoIds();
                 foreach (var localId in localIds)
                 {
-                    if (!serverIds.Contains(localId))
-                    {
-                        _db.DeletePhoto(localId);
-                    }
+                    if (!serverIds.Contains(localId)) _db.DeletePhoto(localId);
                 }
                 _lastFullSyncDate = DateTime.Now;
                 
-                // Si la photo actuelle vient d'être supprimée (ex: par le nettoyage d'une autre app)
                 if (_wallpaperManager.CurrentPhoto != null && !serverIds.Contains(_wallpaperManager.CurrentPhoto.Id))
                 {
                     _wallpaperManager.ApplyNextWallpaper();
+                    ResetCycle();
                 }
             }
 
-            // 2. Mises à jour des statuts favoris
             foreach (var fav in manifest.FavoritesChanged)
             {
                 _db.UpdateFavorite(fav.Id, fav.IsFavorite);
             }
 
-            // 3. Traitement des ajouts : télécharger uniquement la plus récente non affichée
             var pendingPhotos = manifest.Created
                 .Where(p => !_db.PhotoExists(p.Id))
                 .OrderByDescending(p => p.Id)
@@ -143,19 +157,22 @@ public class SyncManager
                         Location = candidateToDownload.Location
                     });
 
-                    // NOUVEAU COMPORTEMENT : Si l'app était à vide, on applique l'image tout de suite
-                    if (_wallpaperManager.CurrentPhoto == null)
+                    // CORRECTION DU DOUBLE-SKIP :
+                    // On affiche immédiatement UNIQUEMENT SI on n'est pas déjà en train d'admirer 
+                    // une photo qu'on vient juste de changer manuellement il y a moins de 5 secondes !
+                    if (_wallpaperManager.CurrentPhoto == null || 
+                        applyNewPhoto || 
+                        (!_wallpaperManager.IsCurrentPhotoFresh && _visibleSecondsElapsed > 5))
                     {
                         _wallpaperManager.ApplyNextWallpaper();
+                        ResetCycle();
                     }
                 }
             }
 
-            // 4. Acquittement vers le serveur
             if (downloadSuccess)
             {
                 await _api.SendManifestAckAsync();
-                
                 var parisZone = TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time");
                 var parisTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, parisZone);
                 _db.SetSetting("LastSyncDate", parisTime.ToString("o"));
