@@ -51,14 +51,18 @@ public class SettingsForm : Form
         var lblTime = new Label { Text = "Temps d'affichage (min) :", Location = new Point(20, 125), AutoSize = true };
         _numTimePerPhoto.Location = new Point(200, 123);
         _numTimePerPhoto.Size = new Size(150, 23);
-        _numTimePerPhoto.Minimum = 1;
+        _numTimePerPhoto.Minimum = 0.1m; // <-- Permet de descendre sous 1
         _numTimePerPhoto.Maximum = 1440;
+        _numTimePerPhoto.DecimalPlaces = 1; // <-- Autorise 1 chiffre après la virgule
+        _numTimePerPhoto.Increment = 0.5m; // <-- Les flèches monteront de 0.5 en 0.5
 
         var lblSync = new Label { Text = "Anticipation synchro (min) :", Location = new Point(20, 160), AutoSize = true };
         _numSyncAnticipation.Location = new Point(200, 158);
         _numSyncAnticipation.Size = new Size(150, 23);
-        _numSyncAnticipation.Minimum = 1;
+        _numSyncAnticipation.Minimum = 0.1m; // <-- Permet de descendre sous 1
         _numSyncAnticipation.Maximum = 60;
+        _numSyncAnticipation.DecimalPlaces = 1; // <-- Autorise 1 chiffre après la virgule
+        _numSyncAnticipation.Increment = 0.5m; // <-- Les flèches monteront de 0.5 en 0.5
 
         var lblReset = new Label { Text = "Heure Reset Serveur (HH:mm) :", Location = new Point(20, 195), AutoSize = true };
         _txtResetTime.Location = new Point(200, 193);
@@ -85,8 +89,14 @@ public class SettingsForm : Form
         _txtServerIp.Text = _db.GetSetting("ServerIP") ?? "";
         _txtPin.Text = _db.GetSetting("Pin") ?? "";
         _numRatio.Value = decimal.TryParse(_db.GetSetting("FavRatio"), out var r) ? r : 20;
-        _numTimePerPhoto.Value = decimal.TryParse(_db.GetSetting("TimePerPhoto"), out var t) ? t : 60;
-        _numSyncAnticipation.Value = decimal.TryParse(_db.GetSetting("SyncAnticipationTime"), out var sa) ? sa : 5;
+
+        // Lecture sécurisée des décimales avec gestion du point/virgule
+        var timeStr = _db.GetSetting("TimePerPhoto")?.Replace(",", ".");
+        _numTimePerPhoto.Value = decimal.TryParse(timeStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var t) ? (t >= 0.1m ? t : 0.1m) : 60m;
+
+        var syncStr = _db.GetSetting("SyncAnticipationTime")?.Replace(",", ".");
+        _numSyncAnticipation.Value = decimal.TryParse(syncStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var sa) ? (sa >= 0.1m ? sa : 0.1m) : 5m;
+        
         _txtResetTime.Text = _db.GetSetting("ServerResetTime") ?? "04:00";
     }
 
@@ -103,9 +113,11 @@ public class SettingsForm : Form
 
         _db.SetSetting("ServerIP", newIp);
         _db.SetSetting("Pin", _txtPin.Text.Trim());
-        _db.SetSetting("FavRatio", _numRatio.Value.ToString());
-        _db.SetSetting("TimePerPhoto", _numTimePerPhoto.Value.ToString());
-        _db.SetSetting("SyncAnticipationTime", _numSyncAnticipation.Value.ToString());
+        _db.SetSetting("FavRatio", _numRatio.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        
+        // Sauvegarde avec le point invariant
+        _db.SetSetting("TimePerPhoto", _numTimePerPhoto.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        _db.SetSetting("SyncAnticipationTime", _numSyncAnticipation.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         var currentResetTime = _db.GetSetting("ServerResetTime");
         var newResetTime = _txtResetTime.Text.Trim();

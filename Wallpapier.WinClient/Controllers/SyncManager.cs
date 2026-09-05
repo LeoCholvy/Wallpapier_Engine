@@ -53,11 +53,16 @@ public class SyncManager
     {
         IsPaused = SystemIntegration.IsDesktopObscured();
 
-        var timePerPhotoMin = int.TryParse(_db.GetSetting("TimePerPhoto"), out var t) ? t : 60;
-        var syncAnticipationMin = int.TryParse(_db.GetSetting("SyncAnticipationTime"), out var s) ? s : 5;
-        
-        var totalCycleSec = timePerPhotoMin * 60;
-        var anticipationSec = syncAnticipationMin * 60;
+        // Remplacement des int.TryParse par double.TryParse
+        var timeStr = _db.GetSetting("TimePerPhoto")?.Replace(",", ".");
+        var timePerPhotoMin = double.TryParse(timeStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var t) ? t : 60.0;
+
+        var syncStr = _db.GetSetting("SyncAnticipationTime")?.Replace(",", ".");
+        var syncAnticipationMin = double.TryParse(syncStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var s) ? s : 5.0;
+    
+        // On convertit les minutes (double) en secondes (int)
+        var totalCycleSec = (int)(timePerPhotoMin * 60);
+        var anticipationSec = (int)(syncAnticipationMin * 60);
         var syncThresholdSec = Math.Max(1, totalCycleSec - anticipationSec);
 
         if (!IsPaused)
@@ -138,38 +143,52 @@ public class SyncManager
                 .ToList();
 
             var downloadSuccess = true;
+            var hasDownloadedNewPhotos = false;
+
             if (pendingPhotos.Count > 0)
             {
-                var candidateToDownload = pendingPhotos.First();
-                var destination = Path.Combine(_db.StorageDirectory, $"{candidateToDownload.Id}.jpg");
-
-                downloadSuccess = await _api.DownloadPhotoAsync(candidateToDownload.Id, destination);
-
-                if (downloadSuccess)
+                // Boucle sur TOUTES les photos manquantes au lieu de .First()
+                foreach (var candidateToDownload in pendingPhotos)
                 {
-                    _db.UpsertPhoto(new LocalPhoto
-                    {
-                        Id = candidateToDownload.Id,
-                        Filepath = destination,
-                        IsFavorite = candidateToDownload.IsFavorite,
-                        HasBeenShown = false,
-                        CaptureDate = candidateToDownload.CaptureDate,
-                        Location = candidateToDownload.Location
-                    });
+                    var destination = Path.Combine(_db.StorageDirectory, $"{candidateToDownload.Id}.jpg");
+                    var success = await _api.DownloadPhotoAsync(candidateToDownload.Id, destination);
 
-                    // CORRECTION DU DOUBLE-SKIP :
-                    // On affiche immédiatement UNIQUEMENT SI on n'est pas déjà en train d'admirer 
-                    // une photo qu'on vient juste de changer manuellement il y a moins de 5 secondes !
-                    if (_wallpaperManager.CurrentPhoto == null || 
-                        applyNewPhoto || 
-                        (!_wallpaperManager.IsCurrentPhotoFresh && _visibleSecondsElapsed > 5))
+                    if (success)
+                    {
+                        _db.UpsertPhoto(new LocalPhoto
+                        {
+                            Id = candidateToDownload.Id,
+                            Filepath = destination,
+                            IsFavorite = candidateToDownload.IsFavorite,
+                            HasBeenShown = false,
+                            CaptureDate = candidateToDownload.CaptureDate,
+                            Location = candidateToDownload.Location
+                        });
+                        hasDownloadedNewPhotos = true;
+                    }
+                    else
+                    {
+                        // En cas d'erreur de réseau, on arrête pour ne pas valider le manifeste à tort
+                        downloadSuccess = false;
+                        break; 
+                    }
+                }
+
+                if (hasDownloadedNewPhotos)
+                {
+                    // On garantit à une nouvelle photo de faire son cycle complet.
+                    // On force le passage à la nouvelle image UNIQUEMENT SI :
+                    // 1. L'écran est vide (CurrentPhoto == null)
+                    // 2. L'utilisateur a cliqué sur "Reconnexion / Synchro" (applyNewPhoto)
+                    // 3. La photo actuelle est une "vieille" photo (IsCurrentPhotoFresh == false)
+                    if (_wallpaperManager.CurrentPhoto == null || applyNewPhoto || !_wallpaperManager.IsCurrentPhotoFresh)
                     {
                         _wallpaperManager.ApplyNextWallpaper();
                         ResetCycle();
                     }
                 }
-            }
-
+            } // Fin du if(pendingPhotos.Count > 0)
+            
             if (downloadSuccess)
             {
                 await _api.SendManifestAckAsync();

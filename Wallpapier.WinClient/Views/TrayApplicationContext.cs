@@ -71,6 +71,19 @@ public partial class TrayApplicationContext : ApplicationContext
             if (_uiContext != null) _uiContext.Post(_ => RefreshTooltip(), null);
             else RefreshTooltip();
         };
+        // Abonnements supplémentaires
+        _wallpaperManager.OnWallpaperChanged += (photo, isFirstShow) =>
+        {
+            if (isFirstShow)
+            {
+                var loc = string.IsNullOrWhiteSpace(photo.Location) ? "Lieu inconnu" : photo.Location;
+                _notifyIcon.ShowBalloonTip(5000, "Nouvelle photo !", $"{loc}\nAjoutée à l'instant.", ToolTipIcon.Info);
+            }
+    
+            // Met à jour l'infobulle (Tooltip) au survol de la souris
+            if (_uiContext != null) _uiContext.Post(_ => RefreshTooltip(), null);
+            else RefreshTooltip();
+        };
         
         RefreshMenuState();
         UpdateStatusIcon(_syncManager.CurrentStatus);

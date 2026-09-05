@@ -215,20 +215,21 @@ public class DatabaseService
         }
     }
 
-    public LocalPhoto? GetNextUnshownNormalPhoto(string? excludeId = null)
+    public LocalPhoto? GetNextUnshownPhoto(string? excludeId = null)
     {
         lock (_dbLock)
         {
             using var connection = new SqliteConnection(_connectionString);
             connection.Open();
             var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, filepath, is_favorite, has_been_shown, capture_date, location FROM Local_Photos WHERE is_favorite = 0 AND has_been_shown = 0 " +
-                              (excludeId != null ? "AND id != $exclude " : "") + "ORDER BY id DESC LIMIT 1;";
+            // Ajout de ORDER BY capture_date DESC pour avoir la plus récente d'abord
+            cmd.CommandText = "SELECT id, filepath, is_favorite, has_been_shown, capture_date, location FROM Local_Photos WHERE has_been_shown = 0 " +
+                              (excludeId != null ? "AND id != $exclude " : "") + "ORDER BY capture_date DESC, id DESC LIMIT 1;";
             if (excludeId != null) cmd.Parameters.AddWithValue("$exclude", excludeId);
 
             using var reader = cmd.ExecuteReader();
             if (reader.Read()) return MapReaderToPhoto(reader);
-            return null; // Plus d'auto-fallback toxique ici
+            return null;
         }
     }
 
