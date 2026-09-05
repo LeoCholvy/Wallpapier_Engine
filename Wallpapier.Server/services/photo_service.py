@@ -5,14 +5,14 @@ from sqlalchemy.orm import Session
 from fastapi import UploadFile
 from typing import Optional
 from datetime import datetime
-from PIL import Image
 
 from configs.settings import IMG_PATH
 from models.schemas import ServerPhoto, ServerSystemState
 from services.time_utils import get_paris_now
 
 
-def save_photo(db: Session, file: UploadFile, location: Optional[str], capture_date: Optional[datetime]) -> ServerPhoto:
+def save_photo(db: Session, file: UploadFile, thumb_file: UploadFile, location: Optional[str],
+               capture_date: Optional[datetime]) -> ServerPhoto:
     new_id = str(uuid6.uuid7())
     filename = f"{new_id}.jpg"
     thumb_filename = f"{new_id}_thumb.jpg"
@@ -24,10 +24,9 @@ def save_photo(db: Session, file: UploadFile, location: Optional[str], capture_d
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Génération de la miniature (très rapide, garde les proportions, max 400x400)
-    with Image.open(file_path) as img:
-        img.thumbnail((400, 400))
-        img.save(thumb_path, "JPEG", quality=75)
+    # Sauvegarde de la miniature envoyée par le client
+    with open(thumb_path, "wb") as buffer:
+        shutil.copyfileobj(thumb_file.file, buffer)
 
     now = get_paris_now()
 

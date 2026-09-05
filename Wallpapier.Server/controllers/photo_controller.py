@@ -21,6 +21,7 @@ LOCK_TIMEOUT = 120.0
 @router.post("", response_model=PhotoMetadataDto, dependencies=[Depends(verify_pin)])
 async def upload_photo(
         file: UploadFile = File(...),
+        thumb_file: UploadFile = File(...),
         location: Optional[str] = Form(None),
         capture_date: Optional[datetime] = Form(None),
         db: Session = Depends(get_db)
@@ -31,7 +32,8 @@ async def upload_photo(
     try:
         async with asyncio.timeout(LOCK_TIMEOUT):
             async with UPLOAD_LOCK:
-                photo = await run_in_threadpool(save_photo, db, file, location, capture_date)
+                # On passe le thumb_file au service
+                photo = await run_in_threadpool(save_photo, db, file, thumb_file, location, capture_date)
                 return photo
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Serveur occupé.")

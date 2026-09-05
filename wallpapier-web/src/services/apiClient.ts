@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { ProcessedImages } from "./imageProcessor";
 import type { AppSettings, PhotoMetadata } from "../types"; // <-- Ajout de "type"
 
 export const getBaseUrl = (ip: string) => {
@@ -26,13 +27,17 @@ export const toggleFavorite = async (settings: AppSettings, id: string, isFavori
 
 export const uploadPhoto = async (
     settings: AppSettings,
-    file: File,
+    images: ProcessedImages,
     location: string,
     onProgress: (percent: number) => void
 ) => {
     const url = `${getBaseUrl(settings.serverIp)}/api/photos`;
     const formData = new FormData();
-    formData.append("file", file, file.name);
+
+    // On envoie les deux fichiers sous les noms attendus par FastAPI
+    formData.append("file", images.main, images.main.name);
+    formData.append("thumb_file", images.thumb, images.thumb.name);
+
     if (location) formData.append("location", location);
 
     await axios.post(url, formData, {

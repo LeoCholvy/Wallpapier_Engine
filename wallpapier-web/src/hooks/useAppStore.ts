@@ -25,12 +25,13 @@ export const useAppStore = () => {
             // 1. Début conversion
             setQueue(q => q.map(i => i.id === nextItem.id ? { ...i, status: "converting" } : i));
             try {
-                const processedFile = await processImage(nextItem.file, settings.maxResolution);
+                // La fonction retourne maintenant l'objet ProcessedImages { main, thumb }
+                const processedImages = await processImage(nextItem.file, settings.maxResolution);
 
-                // 2. Début Upload réseau
                 setQueue(q => q.map(i => i.id === nextItem.id ? { ...i, status: "uploading", progress: 0 } : i));
 
-                await uploadPhoto(settings, processedFile, globalLocation, (percent) => {
+                // On envoie l'objet entier au client API
+                await uploadPhoto(settings, processedImages, globalLocation, (percent) => {
                     setQueue(q => q.map(i => i.id === nextItem.id ? { ...i, progress: percent } : i));
                 });
 
