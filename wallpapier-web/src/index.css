@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Ajout pour éviter que le contenu passe sous la barre de navigation sur mobile */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 80px);
+}
