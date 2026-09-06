@@ -3,6 +3,6 @@
 /obj
 /publish_output
 *.cab
-*.msi
+#*.msi
 *.wixpdb
 *.pdb
