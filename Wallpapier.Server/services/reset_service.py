@@ -21,10 +21,15 @@ def perform_reset():
         photos_to_delete = db.query(ServerPhoto).filter(ServerPhoto.is_favorite == False).all()
 
         for photo in photos_to_delete:
-            # 1. Supprimer le fichier
+            # 1. Supprimer le fichier original
             file_path = IMG_PATH / photo.filename
             if file_path.exists():
                 os.remove(file_path)
+
+            # 1.bis Supprimer la miniature (thumbnail)
+            thumb_path = IMG_PATH / f"{photo.id}_thumb.jpg"
+            if thumb_path.exists():
+                os.remove(thumb_path)
 
             # 2. Enregistrer la suppression pour le manifest (astuce SystemState)
             update_system_state(db, f"deleted_{photo.id}", now.isoformat())
@@ -34,7 +39,7 @@ def perform_reset():
 
         update_system_state(db, "last_reset_date", now.isoformat())
         db.commit()
-        print(f"[ResetService] Nettoyage terminé. {len(photos_to_delete)} photos supprimées.")
+        print(f"[ResetService] Nettoyage terminé. {len(photos_to_delete)} photos et miniatures supprimées.")
     finally:
         db.close()
 

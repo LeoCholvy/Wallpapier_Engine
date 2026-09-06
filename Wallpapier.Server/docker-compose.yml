@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   wallpapier-server:
-    build: .
+    image: leocholvy/wallpapier-server:latest
     network_mode: "host" # Indispensable pour écouter sur l'IP Tailscale du Raspberry
     volumes:
       # /mnt/usb doit être le vrai chemin de votre clé USB sur le Raspberry Pi

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route } from "react-router-dom";
 import { useAppStore } from "./hooks/useAppStore";
 import { BottomTabBar } from "./components/BottomTabBar";
 import { UploadView } from "./views/UploadView";
@@ -13,7 +13,7 @@ function App() {
   }
 
   return (
-      <BrowserRouter>
+      <HashRouter>
         <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
           <Routes>
             <Route path="/" element={<UploadView queue={store.queue} addFiles={store.addFilesToQueue} location={store.globalLocation} setLocation={store.setGlobalLocation} clearDone={store.clearDone} />} />
@@ -22,7 +22,7 @@ function App() {
           </Routes>
           <BottomTabBar />
         </div>
-      </BrowserRouter>
+      </HashRouter>
   );
 }
 

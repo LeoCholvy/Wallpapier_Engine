@@ -1,3 +1,8 @@
 ﻿/.idea
 /bin
 /obj
+/publish_output
+*.cab
+*.msi
+*.wixpdb
+*.pdb
